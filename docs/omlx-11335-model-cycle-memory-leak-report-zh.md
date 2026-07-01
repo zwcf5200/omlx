@@ -256,3 +256,62 @@
 - `/tmp/omlx-memory-cycle-probe/ornith-35b-5bit.jsonl`
 
 四模型组合回归在本次会话中按用户指示取消，未作为本次验收证据。当前 11335 已重新启动并恢复空载，最终健康检查显示 `loaded_count=0`、`current_model_memory=0`。
+
+## 后续追踪项
+
+本次修复已经消除 `Qwen3-Embedding-4B-4bit-DWQ` 的线性 `IOAccelerator (graphics)` 驻留增长，但测试过程仍暴露出需要继续推进的事项。
+
+| 优先级 | 事项 | 当前证据 | 下一步 |
+| --- | --- | --- | --- |
+| P0 | 四模型组合回归尚未执行 | 本次按用户指示取消，当前验收只覆盖单模型循环 | 重启 11335 后执行 `scripts/omlx_memory_cycle_probe.py --default-suite --rounds 10 --label four-model-suite-11335` |
+| P1 | `Qwen3-4B-Instruct-2507-MLX-4bit` 首轮卸载仍有一次性 Metal 驻留 | 5 轮测试中，第 1 轮 after-unload 保留约 2.15GB `IOAccelerator (graphics)`，但第 1 到第 5 轮漂移为 0.0MB | 单独跟踪 batched engine 首轮 runtime/cache 驻留，区分合理 MLX 缓存与可释放引用 |
+| P1 | `/api/status` 无法反映进程级 Metal/IOAccelerator 驻留 | 修复前 API 已显示 `models_loaded=0`、`model_memory_used=0`，但 `vmmap` 显示 graphics 线性增长 | 为 admin/status 或诊断接口增加 macOS 进程级内存观测，至少暴露 Physical Footprint 与 `IOAccelerator (graphics)` |
+| P2 | 本地 lint 环境不完整 | `.venv` 没有 ruff；`uv run ruff` 会卡在更新 git 依赖 | 调整本地开发环境或 CI 入口，让提交前 lint 不依赖重新同步大型 git 依赖 |
+| P2 | 上游 MLX / mlx-embeddings 行为需要最小复现 | oMLX 层面通过清闭包、清 wrapper、清 thread-local compile cache 修复；仍缺独立上游复现脚本 | 提取最小 `mlx-embeddings` + `mx.compile` load/unload 复现，反馈给 MLX 或 mlx-embeddings 上游 |
+
+### 四模型组合回归命令
+
+每次测试前先重启 11335 服务并确认空载：
+
+```bash
+tmux send-keys -t omlx-11335 C-c
+sleep 5
+tmux send-keys -t omlx-11335 'scripts/start-omlx-app-config.sh --host 127.0.0.1 --port 11335' Enter
+curl -sS -H "Authorization: Bearer $OMLX_API_KEY" \
+  http://127.0.0.1:11335/api/status
+```
+
+执行组合回归：
+
+```bash
+.venv/bin/python scripts/omlx_memory_cycle_probe.py \
+  --default-suite \
+  --rounds 10 \
+  --label four-model-suite-11335
+```
+
+验收标准：
+
+- 每轮 after-unload 均应显示 `models_loaded=0`、`model_memory_used_mb=0.0`。
+- 第 10 轮 after-unload 相比第 1 轮 after-unload 的 `IOAccelerator (graphics)` 漂移建议小于 500MB。
+- 如果存在一次性 runtime/cache 驻留，应在前 1-2 轮后收敛，不能继续每轮约 +2GB。
+
+### Instruct 首轮驻留追踪
+
+`Qwen3-4B-Instruct-2507-MLX-4bit` 当前不是本次线性泄露主因，但仍应单独追踪首轮卸载后的约 2.15GB graphics 驻留：
+
+- 先确认该驻留是否来自 MLX runtime/compile/cache 的一次性保留。
+- 再检查 batched engine `EngineCore.close()` 后是否仍有可释放的 tokenizer/model/scheduler/stream-local 引用。
+- 若确认是合理 runtime cache，应在诊断文档中明确“首轮保留但后续不增长”的预期；若不是，应拆出独立修复。
+
+### 诊断接口改进方向
+
+后续可考虑增加仅 macOS 启用的诊断字段：
+
+- `process_rss_mb`
+- `physical_footprint_mb`
+- `ioaccelerator_graphics_mb`
+- `mlx_active_memory_mb`
+- `model_memory_used_mb`
+
+这样可以避免只看模型账本导致误判，让“API 已空载但 Metal 仍驻留”的状态在 oMLX 自身诊断中可见。
