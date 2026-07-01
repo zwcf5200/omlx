@@ -258,6 +258,11 @@ class EngineCore:
         self._start_time: Optional[float] = None
         self._steps_executed = 0
 
+        # Retained completed frames can otherwise keep model weights alive after
+        # close() clears the instance references.
+        model = None
+        tokenizer = None
+
         logger.debug(f"Engine {self._engine_id} initialized")
 
     async def start(self) -> None:
@@ -1185,6 +1190,9 @@ class AsyncEngineCore:
         config: Optional[EngineConfig] = None,
     ):
         self.engine = EngineCore(model, tokenizer, config)
+        # Avoid retained __init__ frame locals keeping model weights alive.
+        model = None
+        tokenizer = None
 
     @property
     def _mlx_executor(self):
