@@ -356,6 +356,19 @@ curl -sS -H "Authorization: Bearer $OMLX_API_KEY" \
 
 复测输出位于 `/tmp/omlx-memory-cycle-probe/instruct-qwen3-4b-narrow-frame-local-fix-3r.*`。修复后首轮 after-unload `IOAccelerator (graphics)` 从修复前约 2150.4MB 降至 2.0MB；第 1 到第 3 轮 after-unload 的 `IOAccelerator (graphics)` 漂移为 `+0.0MB`，`Physical footprint` 漂移为 `+7.2MB`。最终 `/api/status` 确认 `models_loaded=0`、`model_memory_used=0`、`active_requests=0`。
 
+补充泛化修复时间：2026-07-01 11:00-11:05 Asia/Shanghai。为避免同类 retained frame / executor closure 强引用在其它 engine 类型中再次拖住模型对象，补充清理了 embedding、reranker、VLM、DFlash、STT、TTS、STS 生命周期和请求闭包中的模型局部引用；同时为 `MLXRerankerModel` 增加显式 `close()`，释放 compiled callable、Jina projector、model、processor 并清理 MLX compile cache。
+
+泛化修复后执行 3 轮组合复测：
+
+```bash
+.venv/bin/python scripts/omlx_memory_cycle_probe.py \
+  --default-suite \
+  --rounds 3 \
+  --label multi-engine-narrow-release-3r
+```
+
+复测输出位于 `/tmp/omlx-memory-cycle-probe/multi-engine-narrow-release-3r.*`。覆盖模型包括 `Qwen3-4B-Instruct-2507-MLX-4bit`、`Qwen3-Embedding-4B-4bit-DWQ`、`Qwen3-Reranker-0.6B-4bit`、`Ornith-1.0-35B-5bit-mlx`。3 轮 after-unload `IOAccelerator (graphics)` 均为 2.0MB，漂移 `+0.0MB`；最终 unload 日志显示 `active_memory: 1.02KB (settled)`，最终 `/api/status` 确认 `models_loaded=0`、`model_memory_used=0`、`active_requests=0`。
+
 ### 诊断接口改进方向
 
 后续可考虑增加仅 macOS 启用的诊断字段：
