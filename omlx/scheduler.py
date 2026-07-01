@@ -1875,6 +1875,11 @@ class Scheduler:
         # since _get_xtc_special_tokens() delegates to _get_stop_tokens().
         self._xtc_special_tokens: list[int] = self._get_xtc_special_tokens()
 
+        # Retained completed frames can otherwise keep model weights alive after
+        # deep_reset()/close() clears the instance references.
+        model = None
+        tokenizer = None
+
     @contextmanager
     def _phase_timer(self, phase: str):
         """Lightweight wall-time accumulator for cache-on overhead diagnostics.
