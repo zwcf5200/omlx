@@ -105,6 +105,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(get_mlx_executor(), model.close)
         self._model = None
+        model = None
 
         gc.collect()
         logger.info(f"Embedding engine stopped: {self._model_name}")
@@ -191,6 +192,7 @@ class EmbeddingEngine(BaseNonStreamingEngine):
             return output
         finally:
             self._end_activity(activity_id)
+            model = None
 
     def get_stats(self) -> Dict[str, Any]:
         """Get engine statistics."""

@@ -200,6 +200,7 @@ class STTEngine(BaseNonStreamingEngine):
         _validate_stt_processor(model_name, model)
 
         self._model = model
+        model = None
         logger.info(f"STT engine started: {self._model_name}")
 
     async def stop(self) -> None:
@@ -334,6 +335,7 @@ class STTEngine(BaseNonStreamingEngine):
             return result
         finally:
             await self._finish_activity(activity_id)
+            model = None
 
     def get_stats(self) -> dict[str, Any]:
         """Get engine statistics."""

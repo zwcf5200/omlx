@@ -396,6 +396,7 @@ class STSEngine(BaseNonStreamingEngine):
             return result
         finally:
             await self._finish_activity(activity_id)
+            model = None
 
     def get_stats(self) -> Dict[str, Any]:
         """Get engine statistics."""

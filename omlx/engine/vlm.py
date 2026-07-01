@@ -1575,6 +1575,7 @@ class VLMBatchedEngine(BaseEngine):
                     self._engine.engine.scheduler.set_specprefill_draft_model(
                         draft_model, draft_model_name=specprefill_draft
                     )
+                    draft_model = None
                     logger.info(
                         f"SpecPrefill: draft model loaded ({specprefill_draft})"
                     )
@@ -1585,6 +1586,9 @@ class VLMBatchedEngine(BaseEngine):
         self._inject_tool_calling(self._tokenizer)
 
         self._loaded = True
+        scheduler_config = None
+        engine_config = None
+        scheduler = None
         logger.info(f"VLMBatchedEngine loaded: {self._model_name}")
 
     def set_vlm_mtp_drafter(self, drafter: Any) -> None:
@@ -1649,6 +1653,7 @@ class VLMBatchedEngine(BaseEngine):
                     engine.engine.close()
                 except Exception as e:
                     logger.warning(f"Error closing engine: {e}")
+        engine = None
         self._diffusion_cancel_events = set()
         self._diffusion_active_requests = 0
         self._loaded = False
