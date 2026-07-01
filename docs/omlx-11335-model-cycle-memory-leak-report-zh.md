@@ -298,11 +298,50 @@ curl -sS -H "Authorization: Bearer $OMLX_API_KEY" \
 
 ### Instruct 首轮驻留追踪
 
-`Qwen3-4B-Instruct-2507-MLX-4bit` 当前不是本次线性泄露主因，但仍应单独追踪首轮卸载后的约 2.15GB graphics 驻留：
+追踪时间：2026-07-01 10:23-10:25 Asia/Shanghai。
 
-- 先确认该驻留是否来自 MLX runtime/compile/cache 的一次性保留。
-- 再检查 batched engine `EngineCore.close()` 后是否仍有可释放的 tokenizer/model/scheduler/stream-local 引用。
-- 若确认是合理 runtime cache，应在诊断文档中明确“首轮保留但后续不增长”的预期；若不是，应拆出独立修复。
+单独重启 11335 后，只复测 `Qwen3-4B-Instruct-2507-MLX-4bit` 5 轮：
+
+```bash
+.venv/bin/python scripts/omlx_memory_cycle_probe.py \
+  --model Qwen3-4B-Instruct-2507-MLX-4bit \
+  --rounds 5 \
+  --label instruct-qwen3-4b-first-retention
+```
+
+复测输出：
+
+- `/tmp/omlx-memory-cycle-probe/instruct-qwen3-4b-first-retention.jsonl`
+- `/tmp/omlx-memory-cycle-probe/instruct-qwen3-4b-first-retention.csv`
+- `/tmp/omlx-memory-cycle-probe/instruct-qwen3-4b-first-retention.summary.json`
+
+关键样本：
+
+| 阶段 | Cycle | RSS MB | Physical Footprint MB | IOAccelerator Graphics MB | API model_memory_used MB |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| clean baseline | 0 | 143.4 | 93.6 | 1.2 | 0.0 |
+| all_loaded | 1 | 2520.6 | 2355.2 | 2150.4 | 2266.1 |
+| after_unload | 1 | 2496.3 | 2355.2 | 2150.4 | 0.0 |
+| all_loaded | 2 | 4769.6 | 4608.0 | 4300.8 | 2266.1 |
+| after_unload | 2 | 2511.0 | 2355.2 | 2150.4 | 0.0 |
+| all_loaded | 5 | 4790.3 | 4608.0 | 4300.8 | 2266.1 |
+| after_unload | 5 | 2529.6 | 2355.2 | 2150.4 | 0.0 |
+
+摘要：
+
+- 第 1 轮 after-unload 相比 clean baseline 保留 `IOAccelerator (graphics)` 约 2.15GB。
+- 第 1 到第 5 轮 after-unload 的 `IOAccelerator (graphics)` 漂移为 `+0.0MB`。
+- 第 1 到第 5 轮 after-unload 的 `Physical footprint` 漂移为 `+0.0MB`，RSS 只漂移 `+33.3MB`。
+- 最终 `/api/status` 确认 `models_loaded=0`、`model_memory_used=0`、`active_requests=0`。
+
+服务日志与代码审计结论：
+
+- 首轮 unload 日志显示 `Settle barrier timed out ... freed=0.00B`，随后 emergency reclaim 成功但 `active_memory=2.11GB`。
+- 第 2-5 轮 unload 均显示 `freed=2.11GB` 且 `active_memory: 2.11GB (settled)`，说明后续加载新增的模型体量可被卸载路径释放。
+- `BatchedEngine.stop()` 已调用底层 `EngineCore.close()`；`EngineCore.close()` 会在 engine worker thread 上执行 `scheduler.shutdown()`、`scheduler.deep_reset()`，释放 output collector、model/tokenizer/scheduler 引用，并执行 stream-local `_final_engine_thread_reclaim()` 与 thread-local compile cache 清理。
+- `Scheduler.deep_reset()` 会清除 model/layer cache、释放 model/tokenizer 与 cache manager 引用；`EnginePool._unload_engine()` 在 engine 引用清空后执行 GC、`mx.synchronize()`、`mx.clear_cache()`，并用 active memory settle barrier 校验释放效果。
+
+当前判断：该模型存在首轮 MLX/Metal runtime/cache 固定驻留，但 5 轮内不线性增长；没有证据显示 batched engine unload 路径仍持有逐轮累加的可释放引用。后续若要继续压实，可在同一进程内扩展到 10 轮，或重启进程重复确认首轮 2.15GB 是否稳定复现。
 
 ### 诊断接口改进方向
 
