@@ -421,6 +421,10 @@ class DFlashEngine(BaseEngine):
 
         self._loaded = True
         self._in_fallback_mode = False
+        result = None
+        target_bundle = None
+        target_meta = None
+        monitor = None
         max_ctx_display = (
             "unlimited" if self._max_dflash_ctx is None else self._max_dflash_ctx
         )

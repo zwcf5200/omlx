@@ -270,6 +270,7 @@ class TTSEngine(BaseNonStreamingEngine):
             return result
         finally:
             await self._finish_activity(activity_id)
+            model = None
 
     async def stream_synthesize_pcm(
         self,
@@ -398,6 +399,8 @@ class TTSEngine(BaseNonStreamingEngine):
                 yield sample_rate, channels, sample_width, pcm_bytes
         finally:
             await self._finish_activity(activity_id)
+            model = None
+            iterator = None
             logger.info(
                 "TTS native stream done: model=%s, %.2fs, chunks=%d, pcm_bytes=%d",
                 self._model_name,
