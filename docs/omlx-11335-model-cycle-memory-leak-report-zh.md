@@ -206,3 +206,53 @@
 - 完成 10 轮完整循环。
 - after-unload 的 `Physical footprint` 和 `IOAccelerator (graphics)` 不应线性增长。
 - 建议阈值：第 10 轮 after-unload 相比第 1 轮 after-unload 增长小于 500MB；如果 macOS/MLX 有合理缓存保留，则至少应在前 2-3 轮后收敛，而不能持续每轮增加约 2GB。
+
+## 修复后复测
+
+复测时间：2026-07-01 09:24-09:33 Asia/Shanghai。
+
+修复内容：
+
+- `MLXEmbeddingModel.close()` 显式释放 embedding wrapper 资源：
+  - 先清空 `_compiled_embed`，再清空 `model` / `processor`。
+  - 重置 `_loaded`、`_is_compiled`、`_using_native`、`_hidden_size`、输入 key remap 状态。
+  - 在调用线程执行 `gc.collect()`、`mx.synchronize()`、`mx.clear_cache()`、`clear_thread_compile_cache()`。
+- `EmbeddingEngine.stop()` 改为在全局 MLX executor 中调用 `MLXEmbeddingModel.close()`，确保释放发生在 embedding load/embed 使用的同一 MLX worker 线程。
+- 增加 `OMLX_EMBEDDING_COMPILE=0` 排障开关，可在不改代码的情况下禁用 embedding `mx.compile`。
+
+已执行单模型复测。每个模型测试前均重启 11335 服务，并确认 `/health` 空载。
+
+| 模型 | 轮次 | after-unload Physical Footprint 漂移 | after-unload IOAccelerator Graphics 漂移 | 结论 |
+| --- | ---: | ---: | ---: | --- |
+| Qwen3-Embedding-4B-4bit-DWQ | 5 | +21.1MB | +0.0MB | 修复主因泄露 |
+| Qwen3-Reranker-0.6B-4bit | 5 | +19.3MB | +0.0MB | 对照通过 |
+| Qwen3-4B-Instruct-2507-MLX-4bit | 5 | +0.0MB | +0.0MB | 对照通过；仍保留历史已知首轮 runtime/cache 驻留 |
+| Ornith-1.0-35B-5bit-mlx | 3 | +22.2MB | +0.0MB | 对照通过 |
+
+主因模型修复前后对比：
+
+| 指标 | 修复前 5 轮 after-unload | 修复后 5 轮 after-unload |
+| --- | ---: | ---: |
+| RSS 漂移 | +8651.0MB | +21.6MB |
+| Physical Footprint 漂移 | +8601.6MB | +21.1MB |
+| IOAccelerator Graphics 漂移 | +8601.6MB | +0.0MB |
+
+修复后 `Qwen3-Embedding-4B-4bit-DWQ` 的逐轮 after-unload 样本：
+
+| Cycle | after-unload RSS MB | after-unload Physical Footprint MB | after-unload IOAccelerator Graphics MB | API model_memory_used MB |
+| ---: | ---: | ---: | ---: | ---: |
+| baseline | 134.4 | 94.2 | 1.2 | 0.0 |
+| 1 | 176.6 | 111.3 | 1.9 | 0.0 |
+| 2 | 181.7 | 116.4 | 1.9 | 0.0 |
+| 3 | 186.9 | 121.4 | 1.9 | 0.0 |
+| 4 | 193.0 | 127.4 | 1.9 | 0.0 |
+| 5 | 198.2 | 132.4 | 1.9 | 0.0 |
+
+复测输出文件：
+
+- `/tmp/omlx-memory-cycle-probe/embedding-qwen3-4b-dwq.jsonl`
+- `/tmp/omlx-memory-cycle-probe/reranker-qwen3-06b.jsonl`
+- `/tmp/omlx-memory-cycle-probe/instruct-qwen3-4b.jsonl`
+- `/tmp/omlx-memory-cycle-probe/ornith-35b-5bit.jsonl`
+
+四模型组合回归在本次会话中按用户指示取消，未作为本次验收证据。当前 11335 已重新启动并恢复空载，最终健康检查显示 `loaded_count=0`、`current_model_memory=0`。
