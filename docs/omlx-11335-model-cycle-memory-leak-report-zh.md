@@ -341,7 +341,20 @@ curl -sS -H "Authorization: Bearer $OMLX_API_KEY" \
 - `BatchedEngine.stop()` 已调用底层 `EngineCore.close()`；`EngineCore.close()` 会在 engine worker thread 上执行 `scheduler.shutdown()`、`scheduler.deep_reset()`，释放 output collector、model/tokenizer/scheduler 引用，并执行 stream-local `_final_engine_thread_reclaim()` 与 thread-local compile cache 清理。
 - `Scheduler.deep_reset()` 会清除 model/layer cache、释放 model/tokenizer 与 cache manager 引用；`EnginePool._unload_engine()` 在 engine 引用清空后执行 GC、`mx.synchronize()`、`mx.clear_cache()`，并用 active memory settle barrier 校验释放效果。
 
-当前判断：该模型存在首轮 MLX/Metal runtime/cache 固定驻留，但 5 轮内不线性增长；没有证据显示 batched engine unload 路径仍持有逐轮累加的可释放引用。后续若要继续压实，可在同一进程内扩展到 10 轮，或重启进程重复确认首轮 2.15GB 是否稳定复现。
+补充修复时间：2026-07-01 10:49-10:50 Asia/Shanghai。后续最小复现推翻了“合理 runtime/cache 固定驻留”的初步判断：直接 `load_text_model()` 后删除 `model/tokenizer` 可让 `mx.get_active_memory()` 从约 2.26GB 回到约 8 bytes；经过 `EngineCore(model, tokenizer)` 初始化后，`EngineCore.close()` 仍保留约 2.26GB。`weakref` / `gc.get_referrers()` 显示模型对象被已完成的 `EngineCore.__init__`、`Scheduler.__init__`、`AsyncEngineCore.__init__` frame locals 持有。
+
+根因是当前运行环境会保留已完成的初始化 frame，frame locals 中的 `model` / `tokenizer` 参数形成额外强引用；`close()` 清理 `self.model`、`self.tokenizer`、`self.scheduler` 后仍无法释放这份引用。修复方式是在 `EngineCore.__init__`、`Scheduler.__init__`、`AsyncEngineCore.__init__` 完成实例绑定后显式清空 `model` / `tokenizer` 局部引用。
+
+修复后按用户要求执行 3 轮复测：
+
+```bash
+.venv/bin/python scripts/omlx_memory_cycle_probe.py \
+  --model Qwen3-4B-Instruct-2507-MLX-4bit \
+  --rounds 3 \
+  --label instruct-qwen3-4b-narrow-frame-local-fix-3r
+```
+
+复测输出位于 `/tmp/omlx-memory-cycle-probe/instruct-qwen3-4b-narrow-frame-local-fix-3r.*`。修复后首轮 after-unload `IOAccelerator (graphics)` 从修复前约 2150.4MB 降至 2.0MB；第 1 到第 3 轮 after-unload 的 `IOAccelerator (graphics)` 漂移为 `+0.0MB`，`Physical footprint` 漂移为 `+7.2MB`。最终 `/api/status` 确认 `models_loaded=0`、`model_memory_used=0`、`active_requests=0`。
 
 ### 诊断接口改进方向
 
