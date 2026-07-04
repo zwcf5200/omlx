@@ -258,8 +258,8 @@ class EngineCore:
         self._start_time: Optional[float] = None
         self._steps_executed = 0
 
-        # Retained completed frames can otherwise keep model weights alive after
-        # close() clears the instance references.
+        # Drop transient aliases after ownership moves to the engine/scheduler
+        # graph; retained completed frames can otherwise keep weights alive.
         model = None
         tokenizer = None
 
@@ -1190,7 +1190,7 @@ class AsyncEngineCore:
         config: Optional[EngineConfig] = None,
     ):
         self.engine = EngineCore(model, tokenizer, config)
-        # Avoid retained __init__ frame locals keeping model weights alive.
+        # Drop wrapper-local aliases after EngineCore takes ownership.
         model = None
         tokenizer = None
 

@@ -1875,8 +1875,8 @@ class Scheduler:
         # since _get_xtc_special_tokens() delegates to _get_stop_tokens().
         self._xtc_special_tokens: list[int] = self._get_xtc_special_tokens()
 
-        # Retained completed frames can otherwise keep model weights alive after
-        # deep_reset()/close() clears the instance references.
+        # Drop transient aliases after ownership moves to scheduler fields;
+        # retained completed frames can otherwise keep weights alive.
         model = None
         tokenizer = None
 
