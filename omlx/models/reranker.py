@@ -11,6 +11,7 @@ Supports:
 - CausalLM-based rerankers (e.g., Qwen3-Reranker) via yes/no logit scoring
 """
 
+import gc
 import json
 import gc
 import logging
@@ -26,6 +27,7 @@ from ..model_discovery import (
     SUPPORTED_RERANKER_ARCHITECTURES,
     _is_causal_lm_reranker,
 )
+from ..utils.compile_cache import clear_thread_compile_cache
 from ..utils.image import load_image
 from ..utils.compile_cache import clear_thread_compile_cache
 from .mlx_embeddings_compat import (
@@ -263,9 +265,10 @@ class MLXRerankerModel:
 
     def _load_causal_lm(self) -> Tuple[Any, Any]:
         """Load a CausalLM-based reranker model using mlx-lm."""
-        from mlx_lm import load as mlx_lm_load
-
-        from ..utils.model_loading import maybe_load_custom_quantization
+        from ..utils.model_loading import (
+            lm_load_compat as mlx_lm_load,
+            maybe_load_custom_quantization,
+        )
 
         model_path = str(self.model_name)
         tokenizer_config = {"trust_remote_code": self.trust_remote_code}
@@ -338,9 +341,10 @@ class MLXRerankerModel:
         Jina v3 reranker uses special-token hidden states + projector + cosine
         similarity for listwise scoring.
         """
-        from mlx_lm import load as mlx_lm_load
-
-        from ..utils.model_loading import maybe_load_custom_quantization
+        from ..utils.model_loading import (
+            lm_load_compat as mlx_lm_load,
+            maybe_load_custom_quantization,
+        )
 
         model_path = str(self.model_name)
         tokenizer_config = {"trust_remote_code": self.trust_remote_code}
