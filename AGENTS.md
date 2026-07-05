@@ -63,25 +63,25 @@
 ## 安全与配置提示
 
 - 不提交 API 密钥、本地模型路径、生成的报告或机器特定的启动脚本。
-- 使用 `.git/info/exclude` 排除仅本地使用的目录，如 `/.local-maintenance/`。
+- 使用 `.git/info/exclude` 排除仅本地使用的目录，如 `/local-omlx/`。
 
-## .local-maintenance/ — 本地维护仓库
+## local-omlx/ — 本地维护仓库
 
-`omlx/.local-maintenance/` 是一个独立的 Git 仓库，用于跟踪本地产生的
+`omlx/local-omlx/` 是一个独立的 Git 仓库，用于跟踪本地产生的
 修改与维护记录。关键约束：
 
 1. **仅本地使用** — 不推送到任何远程仓库，不涉及上游 PR。
 2. **独立 git 状态** — 该目录有自己的 `.git`，与项目主仓库的 `git status`
-   互不影响；`.local-maintenance/` 的内容也不会出现在主仓库的 diff 中。
+   互不影响；`local-omlx/` 的内容也不会出现在主仓库的 diff 中。
 3. **用途** — 保存临时排查脚本、本地测试报告、诊断文档、未提交的
    工作区变更等。适合需要版本追溯但不愿污染主仓库历史的场景。
 4. **agent 行为** — 当 agent 在该目录中执行 git 操作（add/commit/log/diff）
-   时，应使用 `cd .local-maintenance && git …` 明确限定作用域；
+   时，应使用 `cd local-omlx && git …` 明确限定作用域；
    不得将其误认为主仓库的分支或暂存区。
 
 示例命令：
 ```bash
-cd .local-maintenance
+cd local-omlx
 git add -A && git commit -m "本地修改摘要"
 git log --oneline          # 查看变更记录
 ```
